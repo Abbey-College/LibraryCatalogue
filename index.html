@@ -33,11 +33,26 @@
                     autocomplete="off">
                 <span class="search-icon">🔍</span>
             </div>
+
+            <!-- Dewey Decimal Explorer -->
+            <div class="dewey-explorer">
+                <div class="explorer-header">
+                    <h3>Explore by Dewey Decimal</h3>
+                    <button id="resetDewey" class="text-btn">Clear Filter</button>
+                </div>
+                <div id="deweyBreadcrumb" class="dewey-breadcrumb-nav">
+                    <!-- Dynamic breadcrumb links will be injected here -->
+                </div>
+                <div class="dewey-active-selector">
+                    <select id="deweyActive" class="dewey-select">
+                        <option value="">Select a Category...</option>
+                        <!-- Populated dynamically -->
+                    </select>
+                </div>
+            </div>
+
             <div class="filters-container">
-                <select id="subjectFilter">
-                    <option value="">All Subjects</option>
-                    <!-- Populated dynamically -->
-                </select>
+
                 <select id="sortOrder">
                     <option value="relevance">Sort by Relevance</option>
                     <option value="title-asc">Title (A-Z)</option>

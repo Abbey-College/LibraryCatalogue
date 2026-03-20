@@ -12,13 +12,20 @@ let currentPage = 1;
 
 // DOM Elements
 const searchInput = document.getElementById('searchInput');
-const subjectFilter = document.getElementById('subjectFilter');
 const sortOrder = document.getElementById('sortOrder');
 const resultsGrid = document.getElementById('resultsGrid');
 const loadMoreBtn = document.getElementById('loadMoreBtn');
 const statusMessage = document.getElementById('statusMessage');
 const resultsCount = document.getElementById('resultsCount');
 const pageSizeSelect = document.getElementById('pageSize');
+
+// Dewey Explorer Elements
+const deweyActiveSelect = document.getElementById('deweyActive');
+const deweyBreadcrumbNav = document.getElementById('deweyBreadcrumb');
+const resetDeweyBtn = document.getElementById('resetDewey');
+
+let deweyData = {};
+let currentDeweyPath = []; // Array of {id, name}
 
 /**
  * Initialize the catalogue
@@ -27,16 +34,34 @@ async function init() {
     try {
         updateStatus('Fetching latest catalogue data...', false);
 
+        // Fetch Dewey data asynchronously so it doesn't block CSV rendering
+        fetch('mds.json')
+            .then(res => res.json())
+            .then(data => {
+                deweyData = data;
+                renderDeweyExplorer(); // Populate dropdown when loaded
+            })
+            .catch(err => console.error('Error fetching Dewey data:', err));
+
         Papa.parse(CSV_FILE, {
             download: true,
             header: true,
             skipEmptyLines: true,
             complete: function (results) {
                 if (results.data && results.data.length > 0) {
-                    libraryData = results.data;
+                    libraryData = results.data.map(item => {
+                        return {
+                            code: item.code,
+                            deweyNum: getDeweyNumber(item.code),
+                            title: item.title,
+                            author: item.author,
+                            subject: item.subject,
+                            publisher: item.publisher,
+                            'publication Date': item['publication Date'] || item.pub_date,
+                        };
+                    });
                     filteredResults = [...libraryData];
 
-                    populateSubjects();
                     renderResults();
                     updateStatus(`Successfully loaded ${libraryData.length} records.`, false);
                 } else {
@@ -55,28 +80,117 @@ async function init() {
 }
 
 /**
- * Populate Subject Filter dropdown
+ * Render the Dewey Explorer UI
  */
-function populateSubjects() {
-    const subjects = new Set();
+function renderDeweyExplorer() {
+    // 1. Render Breadcrumbs
+    deweyBreadcrumbNav.innerHTML = '';
 
-    libraryData.forEach(item => {
-        if (item.subject) {
-            // Take the first part of the subject (before /) for clean filtering
-            const mainSubject = item.subject.split('/')[0].trim();
-            if (mainSubject) subjects.add(mainSubject);
+    // Add "Root" as first breadcrumb
+    const rootBtn = document.createElement('span');
+    rootBtn.className = 'breadcrumb-item';
+    rootBtn.textContent = 'All Categories';
+    rootBtn.onclick = () => navigateDeweyPath(-1);
+    deweyBreadcrumbNav.appendChild(rootBtn);
+
+    currentDeweyPath.forEach((step, index) => {
+        const sep = document.createElement('span');
+        sep.className = 'breadcrumb-sep';
+        sep.textContent = '>';
+        deweyBreadcrumbNav.appendChild(sep);
+
+        const btn = document.createElement('span');
+        btn.className = 'breadcrumb-item';
+        btn.textContent = step.name;
+        btn.onclick = () => navigateDeweyPath(index);
+        deweyBreadcrumbNav.appendChild(btn);
+    });
+
+    // 2. Resolve target object for dropdown
+    let currentOptions = deweyData;
+    currentDeweyPath.forEach(step => {
+        if (currentOptions) {
+            const match = currentOptions.find(opt => opt.number === step.id);
+            if (match && match.children) {
+                currentOptions = match.children;
+            } else {
+                currentOptions = null;
+            }
         }
     });
 
-    const sortedSubjects = Array.from(subjects).sort();
+    // 3. Populate Active Select
+    deweyActiveSelect.innerHTML = '<option value="">Select a sub-category...</option>';
 
-    sortedSubjects.forEach(subject => {
-        const option = document.createElement('option');
-        option.value = subject;
-        option.textContent = subject.charAt(0).toUpperCase() + subject.slice(1);
-        subjectFilter.appendChild(option);
-    });
+    if (currentOptions && currentOptions.length > 0) {
+        deweyActiveSelect.disabled = false;
+        const sortedOptions = [...currentOptions].sort((a, b) => a.number.localeCompare(b.number));
+        sortedOptions.forEach(opt => {
+            const option = document.createElement('option');
+            option.value = opt.number;
+            option.textContent = `${opt.number} - ${opt.name}`;
+            deweyActiveSelect.appendChild(option);
+        });
+    } else {
+        deweyActiveSelect.disabled = true;
+        const opt = deweyActiveSelect.querySelector('option');
+        if (!deweyData || deweyData.length === 0) {
+            opt.textContent = 'Loading categories...';
+        } else {
+            opt.textContent = 'Final category reached';
+        }
+    }
 }
+
+/**
+ * Navigate to a specific level in the breadcrumb
+ */
+function navigateDeweyPath(index) {
+    currentDeweyPath = currentDeweyPath.slice(0, index + 1);
+    renderDeweyExplorer();
+    applyFilters();
+}
+
+/**
+ * Dewey Selection Event
+ */
+deweyActiveSelect.addEventListener('change', () => {
+    const val = deweyActiveSelect.value;
+    if (!val) return;
+
+    // Find the name of the selected category
+    let currentOptions = deweyData;
+    currentDeweyPath.forEach(step => {
+        const match = currentOptions.find(opt => opt.number === step.id);
+        if (match && match.children) currentOptions = match.children;
+    });
+
+    const selectedOpt = currentOptions.find(opt => opt.number === val);
+    const selectedName = selectedOpt ? selectedOpt.name : 'Unknown';
+
+    // Push to path
+    currentDeweyPath.push({ id: val, name: selectedName });
+
+    renderDeweyExplorer();
+    applyFilters();
+});
+
+resetDeweyBtn.addEventListener('click', () => {
+    currentDeweyPath = [];
+    renderDeweyExplorer();
+    applyFilters();
+});
+
+/**
+ * Helper to get clean Dewey number from mixed strings
+ */
+function getDeweyNumber(code) {
+    if (!code) return null;
+    const match = code.toString().match(/(\d{3}(\.\d+)?)/);
+    return match ? parseFloat(match[1]) : null;
+}
+
+
 
 /**
  * Update the status message bar
@@ -150,19 +264,34 @@ function createBookCard(book, index) {
  */
 function applyFilters() {
     const query = searchInput.value.toLowerCase().trim();
-    const subject = subjectFilter.value.toLowerCase();
     const sort = sortOrder.value;
 
     filteredResults = libraryData.filter(item => {
+        // Search Filter
         const matchesSearch = !query ||
             (item.title && item.title.toLowerCase().includes(query)) ||
             (item.author && item.author.toLowerCase().includes(query)) ||
             (item.code && item.code.toLowerCase().includes(query));
 
-        const matchesSubject = !subject ||
-            (item.subject && item.subject.toLowerCase().includes(subject));
+        // Dewey Decimal Filter
+        let matchesDewey = true;
+        if (currentDeweyPath.length > 0) {
+            const codeNum = item.deweyNum;
+            if (codeNum !== null) {
+                const latestStep = currentDeweyPath[currentDeweyPath.length - 1];
+                const min = parseFloat(latestStep.id);
+                // Level 1 (Class) range 100, Level 2 (Div) range 10, Level 3 (Sec) range 1
+                const level = currentDeweyPath.length - 1;
+                const range = Math.pow(10, 2 - level);
+                const max = min + range - 0.0001;
 
-        return matchesSearch && matchesSubject;
+                matchesDewey = codeNum >= min && codeNum <= max;
+            } else {
+                matchesDewey = false;
+            }
+        }
+
+        return matchesSearch && matchesDewey;
     });
 
     // Apply Sorting
@@ -187,7 +316,6 @@ function applyFilters() {
  * Event Listeners
  */
 searchInput.addEventListener('input', debounce(applyFilters, 300));
-subjectFilter.addEventListener('change', applyFilters);
 sortOrder.addEventListener('change', applyFilters);
 
 pageSizeSelect.addEventListener('change', () => {
